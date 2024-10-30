@@ -21,9 +21,16 @@ int n_spheres;
 cam camera;
 double light[3];
 
+FILE* image;
+
 void readObjects(int, char **);
 
 int main(int argc, char *argv[]) {
+    image = fopen("image.ppm","w");
+    if(!image) {
+	perror("fopen");
+        return 3;
+    }
     readObjects(argc, argv);
 }
 
