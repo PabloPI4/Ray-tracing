@@ -74,3 +74,7 @@ void readObjects(int argc, char *argv[]) {
         }
     }
 }
+
+ln *calculateRay(double point1[3], double point2[3], ln *ray) {
+    
+}
