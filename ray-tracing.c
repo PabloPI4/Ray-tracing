@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 typedef struct sphere {
     double center[3];
@@ -75,6 +76,49 @@ void readObjects(int argc, char *argv[]) {
     }
 }
 
+ln *calculateReflex(ln *ray, sph *sphere, double point[3]) {
+    double vectorStdSph[3];
+    double newPoint[3];
+
+    for (int i = 0; i < 3; i++) {
+        vectorStdSph[i] = (point[i] - sphere->center[i])/sphere->r;
+        newPoint[i] = 2*(point[i] + vectorStdSph[i]) - (point[i] - ray->vector[i]);
+    }
+
+    return calculateRay(point, newPoint, ray);
+}
+
 ln *calculateRay(double point1[3], double point2[3], ln *ray) {
-    
+    if (ray == NULL) {
+        if ((ray = (ln *) malloc(sizeof(ln))) == NULL) {
+            perror("malloc");
+            exit(3);
+        }
+    }
+
+    for (int i = 0; i < 3; i++) {
+        ray->startPoint[i] = point1[i];
+        ray->vector[i] = point2[i] - point1[i];
+    }
+
+    double std = scalarProduct(ray->vector, ray->vector);
+    for (int i = 0; i < 3; i++) {
+        ray->vector[i] /= std;
+    }
+
+    return ray;
+}
+
+double calculateDistance(double point1[3], double point2[3]) {
+    double vectorDistance[3];
+
+    for (int i = 0; i < 3; i++) {
+        vectorDistance[i] = point1[i] - point2[i];
+    }
+
+    return scalarProduct(vectorDistance, vectorDistance);
+}
+
+double scalarProduct(double vector1[3], double vector2[3]) {
+    return sqrt(vector1[1]*vector2[1] + vector1[2]*vector2[2] + vector1[3]*vector2[3]);
 }
