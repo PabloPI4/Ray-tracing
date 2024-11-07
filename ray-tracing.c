@@ -1,30 +1,18 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-
-typedef struct sphere {
-    double center[3];
-    double r;
-} sph;
-
-typedef struct line {
-    double startPoint[3];
-    double vector[3];
-} ln;
-
-typedef struct camera {
-    double center[3];
-    double direction[3]; //This is the point of the space at which the camera is aimed (The orientation of the camera in the space).
-} cam;
+#include "ray-tracing.h"
 
 sph *spheres;
 int n_spheres;
 cam camera;
 double light[3];
 
-void readObjects(int, char **);
+FILE* image;
 
 int main(int argc, char *argv[]) {
+    image = fopen("image.ppm","w");
+    if(!image) {
+	perror("fopen");
+        return 3;
+    }
     readObjects(argc, argv);
 }
 
@@ -75,7 +63,6 @@ void readObjects(int argc, char *argv[]) {
         }
     }
 }
-
 ln *calculateReflex(ln *ray, sph *sphere, double point[3]) {
     double vectorStdSph[3];
     double newPoint[3];
