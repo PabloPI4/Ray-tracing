@@ -68,6 +68,13 @@ void readObjects(int argc, char *argv[]) {
 ln *calculateReflex(ln *ray, sph *sphere, double point[3]) {
     double vectorStdSph[3];
     double newPoint[3];
+    /*For calculating the reflexed ray it is necesary to calculate a second point of the line.
+    For calculating this point, we calculate a point of symmetry (a point in the line that goes 
+    from the center of the sphere and the intersection point of the ray and the sphere).
+    Then we calculate another point of the ray, so we can calculate the symmetric point of this 
+    one using the point of symmetry.
+    The last step is calling calculateRay passing this 2 points (the calculated and the 
+    intersection point)*/
     for (int i = 0; i < 3; i++) {
         vectorStdSph[i] = (point[i] - sphere->center[i])/sphere->r;
         newPoint[i] = 2*(point[i] + vectorStdSph[i]) - (point[i] - ray->vector[i]);
@@ -76,13 +83,15 @@ ln *calculateReflex(ln *ray, sph *sphere, double point[3]) {
 }
 
 ln *calculateRay(double point1[3], double point2[3], ln *ray) {
-    double std;
+    //If ray is not inicializated we do it
     if (!ray) { /*ray == NULL*/
         if ((ray = (ln *) malloc(sizeof(ln))) == NULL) {
             perror("malloc");
             exit(3);
         }
     }
+    /*We calculate the vector that goes from point1 to point2 and then we standardizate 
+    it dividing it's coordinates by the scalar product of vector*vector*/
     for (int i = 0; i < 3; i++) {
         ray->startPoint[i] = point1[i];
         ray->vector[i] = point2[i] - point1[i];
@@ -95,6 +104,9 @@ ln *calculateRay(double point1[3], double point2[3], ln *ray) {
 }
 
 double calculateDistance(double point1[3], double point2[3]) {
+    /*For calculating the distance between two points first we calculate the
+    vector that goes from point1 to point2, and then we calculate the scalarProduct 
+    of VectorDistance*VectorDistance*/
     double vectorDistance[3];
     for (int i = 0; i < 3; i++) {
         vectorDistance[i] = point1[i] - point2[i];
