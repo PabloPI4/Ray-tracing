@@ -3,7 +3,11 @@
 sph *spheres;
 int n_spheres;
 cam camera;
-double light[3];
+lght light;
+int width = 1920;
+int height = 1080;
+double vectorScreenH[3];
+double vectorScreenV[3];
 
 FILE* image;
 
@@ -14,6 +18,10 @@ int main(int argc, char *argv[]) {
         exit(3);
     }
     readObjects(argc, argv);
+
+    short screen[width*height];
+
+    ray_tracing(screen);
 }
 
 void readObjects(int argc, char *argv[]) {
@@ -42,8 +50,8 @@ void readObjects(int argc, char *argv[]) {
         fprintf(stderr, "Error reading camera\n");
         exit(1);
     }
-    if(stdbol) printf("Write the light's position. Format: x y z\n");
-    if (fscanf(readObjects, "%lf%lf%lf", light, light + 1, light + 2) < 3) {
+    if(stdbol) printf("Write the light's position. Format: x y z intensity\n");
+    if (fscanf(readObjects, "%lf%lf%lf%lf", light.pos, light.pos + 1, light.pos + 2, light.itsty) < 3) {
         fprintf(stderr, "Error reading camera\n");
         exit(2);
     }
@@ -62,7 +70,44 @@ void readObjects(int argc, char *argv[]) {
             spheres[n_spheres - 1].r = r;
         }
     }
+
     if(stdbol) fclose(readObjects);
+}
+
+void ray_tracing(short[]) {
+    double pointInit[3];
+
+    for (int i = 0; i < width * height; i++) {
+
+    }
+}
+
+sph *calculateCollisions(ln *ray) {
+    sph *sphere;
+    double distance;
+    double a = scalarProduct(ray->vector, ray->vector);
+    double b;
+    double c;
+    double vector[3];
+
+    for (int i = 0; i < n_spheres; i++) {
+        b = 2*(ray->vector[0]*(ray->startPoint[0] - spheres[i].center[0]) + ray->vector[1] * 
+        (ray->startPoint[1] - spheres[i].center[1]) + ray->vector[2] * (ray->startPoint[2] - spheres[i].center[2]));
+
+        vector[0] = ray->startPoint[0] - spheres[i].center[0];
+        vector[1] = ray->startPoint[1] - spheres[i].center[1];
+        vector[2] = ray->startPoint[2] - spheres[i].center[2];
+        c = scalarProduct(vector, vector);
+        c -= (sphere->r * sphere->r);
+
+        if (b*b - 4*a*c < 0) {
+            continue;
+        }
+
+        //CALCULAR LOS DOS PUNTOS QUE DA LA ECUACION, DESPUÉS CALCULAR EL DE MENOR DISTANCIA AL PUNTO ANTERIOR.
+        //TENIENDO ESE PUNTO, AHORA SE CALCULA SI ESTÁ POR DETRAS DEL OBJETO ANTERIOR O POR DELANTE, Y SI ESTA POR DELANTE
+        //SE MOODIFICA sphere Y distance SI SU DISTANCIA ES MENOR QUE SUS RESPECTIVOS VALORES ANTERIORES.
+    }
 }
 
 ln *calculateReflex(ln *ray, sph *sphere, double point[3]) {
@@ -96,7 +141,7 @@ ln *calculateRay(double point1[3], double point2[3], ln *ray) {
         ray->startPoint[i] = point1[i];
         ray->vector[i] = point2[i] - point1[i];
     }
-    std = scalarProduct(ray->vector, ray->vector);
+    double std = sqrt(scalarProduct(ray->vector, ray->vector));
     for (int i = 0; i < 3; i++) {
         ray->vector[i] /= std;
     }
@@ -111,9 +156,9 @@ double calculateDistance(double point1[3], double point2[3]) {
     for (int i = 0; i < 3; i++) {
         vectorDistance[i] = point1[i] - point2[i];
     }
-    return scalarProduct(vectorDistance, vectorDistance);
+    return sqrt(scalarProduct(vectorDistance, vectorDistance));
 }
 
 double scalarProduct(double vector1[3], double vector2[3]) {
-    return sqrt(vector1[1]*vector2[1] + vector1[2]*vector2[2] + vector1[3]*vector2[3]);
+    return vector1[0]*vector2[0] + vector1[1]*vector2[1] + vector1[2]*vector2[2];
 }
