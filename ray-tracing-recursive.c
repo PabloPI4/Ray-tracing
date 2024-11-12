@@ -8,6 +8,8 @@ int width = 1920;
 int height = 1080;
 double vectorScreenH[3];
 double vectorScreenV[3];
+short *screen;
+double firstPixel[3]; //This is the pixel in the lower left corner
 
 FILE* image;
 
@@ -19,9 +21,11 @@ int main(int argc, char *argv[]) {
     }
     readObjects(argc, argv);
 
-    short screen[width*height];
+    screen = (short **) malloc(sizeof(short *) * width * height * 3);
 
-    ray_tracing(screen);
+    ray_global();
+
+    free(screen);
 }
 
 void readObjects(int argc, char *argv[]) {
@@ -74,23 +78,51 @@ void readObjects(int argc, char *argv[]) {
     if(stdbol) fclose(readObjects);
 }
 
-void ray_tracing(short[]) {
+void ray_global() {
     double pointInit[3];
+    //CALCULAR LOS VECTORES DE LA PANTALLA
 
-    for (int i = 0; i < width * height; i++) {
-
+    for (int i = 0; i < width * height * 3; i+=3) {
+        ray_tracing(screen + i, i);
     }
 }
 
-sph *calculateCollisions(ln *ray) {
+void ray_tracing(short *posScreen, int x) { //PASAR ESTOS CALCULOS A ray_global PARA PODER HACER ESTA FUNCIÓN RECURSIVA Y REDEFINIR ARGUMENTOS
+    double fromPoint[3];
+    ln ray;
+
+    for (int i = 0; i < 3; i++) {
+        fromPoint[i] = firstPixel[i] + vectorScreenH[i] * (x % width) + vectorScreenV[i] * (x/width);
+        ray.startPoint[i] = camera.center[i];
+        ray.vector[i] = fromPoint[i] - camera.center[i];
+    }
+
+    //SI collisionWithLight, ENTONCES RETURN COLOR DE LUZ CON SU INTENSIDAD
+    
+    //SI NO, HACER EL CALCULO DEL PUNTO CON EL QUE COLISIONA EN ALGUNA ESFERA
+
+    //SI NO COLISIONA CON NINGUNA ESFERA, ENTONCES RETURN COLOR FONDO CON INTENSIDAD 0
+
+    //SI COLISIONA CON UNA ESFERA, ENTONCES MODIFICAR EL COLOR CON LO OBTENIDO EN ray_tracing(argumentos siguiente esfera) Y RETURN NUEVO COLOR E INTENSIDAD DE LA LUZ
+}
+
+sph *calculateCollisions(ln *ray, double point[3]) {
+    //This function calculates the sphere that the ray collides with
     sph *sphere;
-    double distance;
+    double distance = __DBL_MAX__; /*Initialised to DBL_MAX because the first distance 
+    calculated should be a candidate for the global distance. With this value we are 
+    sure that every distance is lower than this one*/
     double a = scalarProduct(ray->vector, ray->vector);
     double b;
     double c;
+    double insideSqrt;
+    double distanceSol;
     double vector[3];
+    double newFirstPoint[3];
 
     for (int i = 0; i < n_spheres; i++) {
+        /*We calculate the values of a, b and c from the equation that calculates the 
+        intersection points between a line and a sphere. More details are given in README.md*/
         b = 2*(ray->vector[0]*(ray->startPoint[0] - spheres[i].center[0]) + ray->vector[1] * 
         (ray->startPoint[1] - spheres[i].center[1]) + ray->vector[2] * (ray->startPoint[2] - spheres[i].center[2]));
 
@@ -99,14 +131,62 @@ sph *calculateCollisions(ln *ray) {
         vector[2] = ray->startPoint[2] - spheres[i].center[2];
         c = scalarProduct(vector, vector);
         c -= (sphere->r * sphere->r);
+        insideSqrt = b*b - 4*a*c;
 
-        if (b*b - 4*a*c < 0) {
+        /*With a, b and c we calculate if the equation has any solution. We know that if 
+        b^2 - 4ac < 0 the equation has no solutions*/
+        if (sqrt < 0) {
             continue;
         }
 
-        //CALCULAR LOS DOS PUNTOS QUE DA LA ECUACION, DESPUÉS CALCULAR EL DE MENOR DISTANCIA AL PUNTO ANTERIOR.
-        //TENIENDO ESE PUNTO, AHORA SE CALCULA SI ESTÁ POR DETRAS DEL OBJETO ANTERIOR O POR DELANTE, Y SI ESTA POR DELANTE
-        //SE MOODIFICA sphere Y distance SI SU DISTANCIA ES MENOR QUE SUS RESPECTIVOS VALORES ANTERIORES.
+        /*Then we calculate the intersection points and evaluate if they are between 
+        the point from where the ray starts and infinite in the direction of the ray.
+        If this happens, then we evaluate if the distance between this point and the origin 
+        of the ray is lower than distances calculated with other spheres collided.
+        If this happens, then the sphere collided is equal to the sphere of this iteration*/
+        distanceSol = (b + sqrt(insideSqrt))/(2 * a);
+        for (int j = 0; j < 2; j++) {
+            int behind = 1;
+
+            for (int j = 0; j < 3; j++) {
+                newFirstPoint[i] = ray->startPoint[i] + ray->vector[i] * distanceSol;
+                vector[i] = newFirstPoint[i] - point[i];
+
+                if ((vector[i] == 0 && ray->vector[i] != 0) || vector[i]/ray->vector[i] < 0) {
+                    behind = 0;
+                    break;
+                }
+            }
+
+            if (!behind) {
+                continue;
+            }
+
+            distanceSol = calculateDistance(point, newFirstPoint);
+
+            if (distanceSol < distance) {
+                distance = distanceSol;
+                sphere = spheres + i;
+            }
+
+            distanceSol = (b - sqrt(insideSqrt))/(2 * a);
+        }
+    }
+
+    for (int i = 0; i < 3; i++) {
+        point[i] = newFirstPoint[i];
+    }
+
+    return sphere;
+}
+
+int collisionWithLight(ln *ray) {
+    if ((light.pos[0] - ray->startPoint[0])/ray->vector[0] == (light.pos[1] - ray->startPoint[1])/ray->vector[1] && 
+    (light.pos[0] - ray->startPoint[0])/ray->vector[0] == (light.pos[2] - ray->startPoint[2])/ray->vector[2]) {
+        return 1;
+    }
+    else {
+        return 0;
     }
 }
 
