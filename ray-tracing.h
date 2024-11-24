@@ -3,10 +3,12 @@
 #include <string.h>
 #include <math.h>
 
+#define scalarProduct(vector1, vector2) (vector1[0]*vector2[0] + vector1[1]*vector2[1] + vector1[2]*vector2[2])
+
 typedef struct sphere {
     double center[3];
     double r;
-    char color[3];
+    unsigned char color[3];
     double absorption[3];
 } sph;
 
@@ -47,13 +49,12 @@ double calculateDistance(double point1[3], double point2[3]);
 
 double calculateAngle(ln *ray, double point[3], double centerSphere[3]);
 
-/*this function makes the scalar product between two vectors*/
-double scalarProduct(double vector1[3], double vector2[3]);
-
 void ray_global();
 
 void ray_tracing(short *posScreen, int x);
 
 sph *calculateCollisions(ln *, double point[3], sph *sphere, cllsn *collision);
+
+int collisionWithLight(ln *ray);
 
 void writeImage();

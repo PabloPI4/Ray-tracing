@@ -1,4 +1,4 @@
 prog: ray-tracing.c
-	gcc ray-tracing.c -lm -o prog
+	gcc ray-tracing.c -lm -o ray-tracing
 clean:
-	rm -f prog image.ppm
+	rm -f ray-tracing image.ppm

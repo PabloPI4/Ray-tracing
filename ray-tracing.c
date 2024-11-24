@@ -4,11 +4,11 @@ sph *spheres;
 int n_spheres;
 cam camera;
 lght light;
-int width = 1920;
-int height = 1080;
+int width;
+int height;
 double vectorScreenH[3];
 double vectorScreenV[3];
-char *screen;
+unsigned char *screen;
 double firstPixel[3]; //This is the pixel in the lower left corner
 
 FILE* image;
@@ -21,9 +21,11 @@ int main(int argc, char *argv[]) {
     }
     readObjects(argc, argv);
 
-    screen = (short **) malloc(sizeof(short *) * width * height * 3);
+    screen = (unsigned char *) malloc(width * height * 3);
 
     ray_global();
+
+    writeImage();
 
     free(screen);
 }
@@ -31,6 +33,7 @@ int main(int argc, char *argv[]) {
 void readObjects(int argc, char *argv[]) {
     FILE *readObjects;
     double pos[3];
+    double color[3];
     double r;
     int end,i;
     char stdbol = 0; 
@@ -48,21 +51,52 @@ void readObjects(int argc, char *argv[]) {
     }
     else {
         fprintf(stderr, "Incorrect number of arguments. Passed %d arguments while this program needs just 1\n", argc - 1);
+        exit(10);
     }
-    if(stdbol) printf("Write the camera's position. Format: x y z vector(x) vector(y) vector(z)\n");
-    if (fscanf(readObjects, "%lf%lf%lf%lf%lf%lf", camera.center, camera.center + 1, camera.center + 2, camera.direction, camera.direction + 1, camera.direction + 2) < 6) {
+
+    if(stdbol) printf("Write the size of the screen: FHD (1920x1080), QHD (2560x1440) or UHD (3840x2160)\n");
+    char res[4];
+    if (fgets(res, 4, readObjects) == NULL) {
+        fprintf(stderr, "incorrect resolution\n");
+        exit(5);
+    }
+
+    if (strcmp(res, "FHD") == 0) {
+        width = 1920;
+        height = 1080;
+    }
+    else if (strcmp(res, "QHD") == 0) {
+        width = 2560;
+        height = 1440;
+    }
+    else if (strcmp(res, "QHD") == 0) {
+        width = 3840;
+        height = 2160;
+    }
+    else {
+        fprintf(stderr, "incorrect resolution\n");
+        exit(5);
+    }
+
+
+    if(stdbol) printf("Write the camera's position. Format: x y z vector(x) vector(z)\n");
+    if (fscanf(readObjects, "%lf%lf%lf%lf%lf", camera.center, camera.center + 1, camera.center + 2, camera.direction, camera.direction + 2) < 5) {
         fprintf(stderr, "Error reading camera\n");
         exit(1);
     }
+    camera.direction[1] = 0;
+
     if(stdbol) printf("Write the light's position. Format: x y z intensity\n");
-    if (fscanf(readObjects, "%lf%lf%lf%lf", light.pos, light.pos + 1, light.pos + 2, light.itsty) < 3) {
+    if (fscanf(readObjects, "%lf%lf%lf%lf", light.center, light.center + 1, light.center + 2, &light.itsty) < 4) {
         fprintf(stderr, "Error reading camera\n");
         exit(2);
     }
+    light.r = 3;
+
     end = 0;
     while(!end) {
-        if(stdbol) printf("Reading the center and radius of the spheres. Format: x y z r\n");
-        if (fscanf(readObjects, "%lf%lf%lf%lf", pos, pos + 1, pos + 2, &r) < 4) {
+        if(stdbol) printf("Reading the center, radius and color of the spheres. Format: x y z r colorR colorG colorB\n");
+        if (fscanf(readObjects, "%lf%lf%lf%lf%lf%lf%lf", pos, pos + 1, pos + 2, &r, color + 0, color + 1, color + 2) < 7) {
             if(stdbol) fprintf(stderr, "End of reading\n");
             end = 1;
         }
@@ -70,10 +104,30 @@ void readObjects(int argc, char *argv[]) {
             spheres = (sph*) realloc(spheres, ++n_spheres * sizeof(sph));
             for (i = 0; i < 3; i++) {
                 spheres[n_spheres - 1].center[i] = pos[i];
+                spheres[n_spheres - 1].color[i] = color[i];
+                spheres[n_spheres - 1].absorption[i] = (255 - color[i]) / 255.0;
             }
             spheres[n_spheres - 1].r = r;
         }
     }
+
+    double centerPoint[3];
+    centerPoint[0] = camera.center[0] + camera.direction[0];
+    centerPoint[1] = camera.center[1] + camera.direction[1];
+    centerPoint[2] = camera.center[2] + camera.direction[2];
+
+    vectorScreenV[0] = 0;
+    vectorScreenV[1] = 0.05;
+    vectorScreenV[2] = 0;
+
+    //HACER PRODUCTO VECTORIAL
+    vectorScreenH[0] = camera.direction[1] * vectorScreenV[2] - camera.direction[2] * vectorScreenV[1];
+    vectorScreenH[1] = camera.direction[2] * vectorScreenV[0] - camera.direction[0] * vectorScreenV[2];
+    vectorScreenH[2] = camera.direction[0] * vectorScreenV[1] - camera.direction[1] * vectorScreenV[0];
+
+    firstPixel[0] = centerPoint[0] - vectorScreenH[0]*(width/2) - vectorScreenV[0]*(height/2);
+    firstPixel[1] = centerPoint[1] - vectorScreenH[1]*(width/2) - vectorScreenV[1]*(height/2);
+    firstPixel[2] = centerPoint[2] - vectorScreenH[2]*(width/2) - vectorScreenV[2]*(height/2);
 
     if(stdbol) fclose(readObjects);
 }
@@ -82,21 +136,22 @@ void ray_global() {
     double pointInit[3];
     cllsn collision;
     cllsn cols[20];
-    int colPos = 0;
+    int colPos;
     ln ray;
-    ln newRay;
-    int noLight = 0;
-    sph *sphereCollided = NULL;
+    int noLight;
+    sph *sphereCollided;
     //CALCULAR LOS VECTORES DE LA PANTALLA
 
     for (int i = 0; i < width * height * 3; i+=3) {
+        sphereCollided = NULL;
+        colPos = 0;
+        noLight = 0;
+
         for (int j = 0; j < 3; j++) {
-            pointInit[j] = firstPixel[j] + vectorScreenH[j] * ((i % (width * 3))/3) + vectorScreenV[i] * (i/(width * 3));
+            pointInit[j] = firstPixel[j] + vectorScreenH[j] * ((i % (width * 3))/3) + vectorScreenV[j] * (i/(width * 3));
             ray.startPoint[j] = camera.center[j];
             ray.vector[j] = pointInit[j] - camera.center[j];
         }
-
-        noLight = 0;
 
         while(!collisionWithLight(&ray)) {
             if ((sphereCollided = calculateCollisions(&ray, pointInit, sphereCollided, &collision)) == NULL || colPos > 19) {
@@ -106,6 +161,8 @@ void ray_global() {
 
             memcpy(cols + colPos, &collision, sizeof(cllsn));
             colPos++;
+
+            calculateReflex(&ray, sphereCollided, pointInit);
         }
 
         if (noLight) {
@@ -115,11 +172,11 @@ void ray_global() {
             continue;
         }
 
-        double distance = calculateDistance(light.pos, pointInit);
+        double distance = calculateDistance(light.center, pointInit);
         double intensity = light.itsty / (distance * distance);
         double color[3] = {255, 255, 255};
 
-        for (int i = colPos; i >= 0; i++) {
+        for (int i = colPos; i > 0; i++) {
             color[0] *= cols[i].sphere->absorption[0];
             color[1] *= cols[i].sphere->absorption[1];
             color[2] *= cols[i].sphere->absorption[2];
@@ -128,6 +185,12 @@ void ray_global() {
         }
 
         color[0] *= (1 - 1/intensity);
+        color[1] *= (1 - 1/intensity);
+        color[2] *= (1 - 1/intensity);
+        
+        screen[i] = (unsigned char) (color[0] + 0.5);
+        screen[i + 1] = (unsigned char) (color[0] + 0.5);
+        screen[i + 2] = (unsigned char) (color[0] + 0.5);
     }
 }
 
@@ -159,7 +222,7 @@ sph *calculateCollisions(ln *ray, double point[3], sph *origin, cllsn *collision
         vector[1] = ray->startPoint[1] - spheres[i].center[1];
         vector[2] = ray->startPoint[2] - spheres[i].center[2];
         c = scalarProduct(vector, vector);
-        c -= (sphere->r * sphere->r);
+        c -= (spheres[i].r * spheres[i].r);
         insideSqrt = b*b - 4*a*c;
 
         /*With a, b and c we calculate if the equation has any solution. We know that if 
@@ -228,6 +291,7 @@ int collisionWithLight(ln *ray) {
     vector[0] = ray->startPoint[0] - light.center[0];
     vector[1] = ray->startPoint[1] - light.center[1];
     vector[2] = ray->startPoint[2] - light.center[2];
+
     c = scalarProduct(vector, vector);
     c -= (light.r * light.r);
 
@@ -287,12 +351,8 @@ double calculateAngle(ln *ray, double point[3], double centerSphere[3]) {
         vectorSphere[i] = point[i] - centerSphere[i];
     }
 
-    return arccos((ray->vector[0]*vectorSphere[0] + ray->vector[1]*vectorSphere[1] + ray->vector[2]*vectorSphere[2]) / 
+    return acos((ray->vector[0]*vectorSphere[0] + ray->vector[1]*vectorSphere[1] + ray->vector[2]*vectorSphere[2]) / 
     (sqrt(scalarProduct(ray->vector, ray->vector)) * sqrt(scalarProduct(vectorSphere, vectorSphere))));
-}
-
-double scalarProduct(double vector1[3], double vector2[3]) {
-    return vector1[0]*vector2[0] + vector1[1]*vector2[1] + vector1[2]*vector2[2];
 }
 
 void writeImage() {
@@ -301,7 +361,7 @@ void writeImage() {
     fwrite(header, 1, 20, image);
 
     for (int i = 0; i < height; i++) {
-        fprintf(image, " %d", (int)screen[i * width * 3]);
+        fprintf(image, " %d", (unsigned int)screen[i * width * 3]);
 
         for (int j = 1; j < width * 3; j++) {
             fprintf(image, " %d", screen[i * width * 3 + j]);
