@@ -1,12 +1,11 @@
-#include "ray-tracing.h"
+#include "ray-casting.h"
 
 sph *spheres;
-int n_spheres;
 pln *walls;
 int n_walls;
+int n_spheres;
 cam camera;
 lght light;
-double ambientLight;
 int width;
 int height;
 double vectorScreenH[3];
@@ -17,7 +16,7 @@ double firstPixel[3]; //This is the pixel in the lower left corner
 FILE* image;
 
 int main(int argc, char *argv[]) {
-    image = fopen("image.ppm","w");
+    image = fopen("cast.ppm","w");
     if(!image) { /*error with the end image*/
 	    perror("fopen");
         exit(3);
@@ -30,8 +29,6 @@ int main(int argc, char *argv[]) {
 
     writeImage();
 
-    free(spheres);
-    free(walls);
     free(screen);
 }
 
@@ -40,8 +37,6 @@ void readObjects(int argc, char *argv[]) {
     double pos[3];
     double color[3];
     double r;
-    int absL;
-    double reflection;
     int end,i;
     char stdbol = 0; 
     if (argc < 2) {
@@ -89,34 +84,31 @@ void readObjects(int argc, char *argv[]) {
         exit(5);
     }
 
+
     if(stdbol) printf("Write the camera's position. Format: x y z vector(x) vector(z)\n");
     if (fscanf(readObjects, "%lf%lf%lf%lf%lf", camera.center, camera.center + 1, camera.center + 2, camera.direction, camera.direction + 2) < 5) {
         fprintf(stderr, "Error reading camera\n");
         exit(1);
     }
     camera.direction[1] = 0;
-    double cameraScalar = sqrt(scalarProduct(camera.direction, camera.direction));
+    double cameraScalar = scalarProduct(camera.direction, camera.direction);
     for (int i = 0; i < 3; i++) {
         camera.direction[i] /= cameraScalar;
     }
 
-    if(stdbol) printf("Write the light's position. Format: x y z r\n");
-    if (fscanf(readObjects, "%lf%lf%lf%lf", light.center, light.center + 1, light.center + 2, &light.r) < 4) {
+    if(stdbol) printf("Write the light's position. Format: x y z intensity\n");
+    if (fscanf(readObjects, "%lf%lf%lf%lf", light.center, light.center + 1, light.center + 2, &light.itsty) < 4) {
         fprintf(stderr, "Error reading camera\n");
         exit(2);
     }
-    light.itsty = 0.8;
-
-    ambientLight = 0.2;
+    light.r = 20;
 
     walls = (pln *) malloc(sizeof(pln) * 6);
-    n_walls = 6;
 
     walls[0].color[0] = 255;
     walls[0].color[1] = 255;
     walls[0].color[2] = 255;
-    walls[0].absorptionLight = 800;
-    walls[0].reflection = 0.8;
+    n_walls = 6;
 
     if(stdbol) printf("Write the ceiling color. Format: colorR colorG colorB\n");
     if (fscanf(readObjects, "%lf%lf%lf", color, color + 1, color + 2) < 3) {
@@ -126,8 +118,6 @@ void readObjects(int argc, char *argv[]) {
     walls[1].color[0] = color[0];
     walls[1].color[1] = color[1];
     walls[1].color[2] = color[2];
-    walls[1].absorptionLight = -1;
-    walls[1].reflection = 0.2;
     if(stdbol) printf("Write the left wall color. Format: colorR colorG colorB\n");
     if (fscanf(readObjects, "%lf%lf%lf", color, color + 1, color + 2) < 3) {
         fprintf(stderr, "Error reading left wall color\n");
@@ -136,8 +126,6 @@ void readObjects(int argc, char *argv[]) {
     walls[2].color[0] = color[0];
     walls[2].color[1] = color[1];
     walls[2].color[2] = color[2];
-    walls[2].absorptionLight = 80;
-    walls[2].reflection = 0.2;
     if(stdbol) printf("Write the right wall color. Format: colorR colorG colorB\n");
     if (fscanf(readObjects, "%lf%lf%lf", color, color + 1, color + 2) < 3) {
         fprintf(stderr, "Error reading right wall color\n");
@@ -146,8 +134,6 @@ void readObjects(int argc, char *argv[]) {
     walls[3].color[0] = color[0];
     walls[3].color[1] = color[1];
     walls[3].color[2] = color[2];
-    walls[3].absorptionLight = 80;
-    walls[3].reflection = 0.2;
     if(stdbol) printf("Write the front wall color. Format: colorR colorG colorB\n");
     if (fscanf(readObjects, "%lf%lf%lf", color, color + 1, color + 2) < 3) {
         fprintf(stderr, "Error reading front wall color\n");
@@ -156,8 +142,6 @@ void readObjects(int argc, char *argv[]) {
     walls[4].color[0] = color[0];
     walls[4].color[1] = color[1];
     walls[4].color[2] = color[2];
-    walls[4].absorptionLight = 80;
-    walls[4].reflection = 0.2;
     if(stdbol) printf("Write the back wall color. Format: colorR colorG colorB\n");
     if (fscanf(readObjects, "%lf%lf%lf", color, color + 1, color + 2) < 3) {
         fprintf(stderr, "Error reading back wall color\n");
@@ -166,13 +150,11 @@ void readObjects(int argc, char *argv[]) {
     walls[5].color[0] = color[0];
     walls[5].color[1] = color[1];
     walls[5].color[2] = color[2];
-    walls[5].absorptionLight = 80;
-    walls[5].reflection = 0.2;
 
     end = 0;
     while(!end) {
-        if(stdbol) printf("Reading the center, radius and color of the spheres. Format: x y z r colorR colorG colorB reflectionInteger\n");
-        if (fscanf(readObjects, "%lf%lf%lf%lf%lf%lf%lf%d%lf", pos, pos + 1, pos + 2, &r, color + 0, color + 1, color + 2, &absL, &reflection) < 7) {
+        if(stdbol) printf("Reading the center, radius and color of the spheres. Format: x y z r colorR colorG colorB\n");
+        if (fscanf(readObjects, "%lf%lf%lf%lf%lf%lf%lf", pos, pos + 1, pos + 2, &r, color + 0, color + 1, color + 2) < 7) {
             if(stdbol) fprintf(stderr, "End of reading\n");
             end = 1;
         }
@@ -181,10 +163,10 @@ void readObjects(int argc, char *argv[]) {
             for (i = 0; i < 3; i++) {
                 spheres[n_spheres - 1].center[i] = pos[i];
                 spheres[n_spheres - 1].color[i] = color[i];
+                spheres[n_spheres - 1].reflection[i] = color[i]/255.0;
+
             }
             spheres[n_spheres - 1].r = r;
-            spheres[n_spheres - 1].absorptionLight = absL;
-            spheres[n_spheres - 1].reflection = reflection;
         }
     }
 
@@ -197,6 +179,7 @@ void readObjects(int argc, char *argv[]) {
     vectorScreenV[1] = 25.6/width;
     vectorScreenV[2] = 0;
 
+    //HACER PRODUCTO VECTORIAL
     vectorScreenH[0] = camera.direction[1] * vectorScreenV[2] - camera.direction[2] * vectorScreenV[1];
     vectorScreenH[1] = camera.direction[2] * vectorScreenV[0] - camera.direction[0] * vectorScreenV[2];
     vectorScreenH[2] = camera.direction[0] * vectorScreenV[1] - camera.direction[1] * vectorScreenV[0];
@@ -205,173 +188,96 @@ void readObjects(int argc, char *argv[]) {
     firstPixel[1] = centerPoint[1] - vectorScreenH[1]*(width/2) - vectorScreenV[1]*(height/2);
     firstPixel[2] = centerPoint[2] - vectorScreenH[2]*(width/2) - vectorScreenV[2]*(height/2);
 
-    walls[0].coeficients[0] = -vectorScreenV[0];
-    walls[0].coeficients[1] = -vectorScreenV[1];
-    walls[0].coeficients[2] = -vectorScreenV[2];
-    walls[0].d = -(walls[0].coeficients[0] + walls[0].coeficients[1] * (centerPoint[1] + vectorScreenV[1] * (height/2)));
+    walls[0].a = -vectorScreenV[0];
+    walls[0].b = -vectorScreenV[1];
+    walls[0].c = -vectorScreenV[2];
+    walls[0].d = -(walls[0].a + walls[0].b * (centerPoint[1] + vectorScreenV[1] * (height/2)));
 
-    walls[4].coeficients[0] = vectorScreenV[0];
-    walls[4].coeficients[1] = vectorScreenV[1];
-    walls[4].coeficients[2] = vectorScreenV[2];
-    walls[4].d = -(walls[4].coeficients[0] + walls[4].coeficients[1] * (centerPoint[1] - vectorScreenV[1] * (height/2)));
+    walls[1].a = vectorScreenV[0];
+    walls[1].b = vectorScreenV[1];
+    walls[1].c = vectorScreenV[2];
+    walls[1].d = -(walls[1].a + walls[1].b * (centerPoint[1] - vectorScreenV[1] * (height/2)));
 
-    walls[2].coeficients[0] = -vectorScreenH[0];
-    walls[2].coeficients[1] = -vectorScreenH[1];
-    walls[2].coeficients[2] = -vectorScreenH[2];
-    walls[2].d = -(walls[2].coeficients[0] + walls[2].coeficients[2] * (centerPoint[2] + vectorScreenH[2] * (width/2)));
+    walls[2].a = -vectorScreenH[0];
+    walls[2].b = -vectorScreenH[1];
+    walls[2].c = -vectorScreenH[2];
+    walls[2].d = -(walls[2].a + walls[2].c * (centerPoint[2] + vectorScreenH[2] * (width/2)));
 
-    walls[3].coeficients[0] = vectorScreenH[0];
-    walls[3].coeficients[1] = vectorScreenH[1];
-    walls[3].coeficients[2] = vectorScreenH[2];
-    walls[3].d = -(walls[3].coeficients[0] + walls[3].coeficients[2] * (centerPoint[2] - vectorScreenH[2] * (width/2)));
+    walls[3].a = vectorScreenH[0];
+    walls[3].b = vectorScreenH[1];
+    walls[3].c = vectorScreenH[2];
+    walls[3].d = -(walls[3].a + walls[3].c * (centerPoint[2] - vectorScreenH[2] * (width/2)));
 
-    walls[1].coeficients[0] = -camera.direction[0];
-    walls[1].coeficients[1] = -camera.direction[1];
-    walls[1].coeficients[2] = -camera.direction[2];
-    walls[1].d = -(walls[1].coeficients[0] * (centerPoint[0] + camera.direction[0] * 10));
+    walls[4].a = -camera.direction[0];
+    walls[4].b = -camera.direction[1];
+    walls[4].c = -camera.direction[2];
+    walls[4].d = -(walls[4].a * (centerPoint[0] + camera.direction[0] * 10));
 
-    walls[5].coeficients[0] = camera.direction[0];
-    walls[5].coeficients[1] = camera.direction[1];
-    walls[5].coeficients[2] = camera.direction[2];
-    walls[5].d = -(walls[5].coeficients[0] * (centerPoint[0] - camera.direction[0] * 7));
+    walls[5].a = camera.direction[0];
+    walls[5].b = camera.direction[1];
+    walls[5].c = camera.direction[2];
+    walls[5].d = -(walls[5].a * (centerPoint[0] - camera.direction[0] * 7));
 
     if(stdbol) fclose(readObjects);
 }
 
 void ray_global() {
-    double *color = (double *) malloc(sizeof(double) * 3);
-    int maxReflexes = 3;
     double pointInit[3];
+    double x[3];
+    cllsn collision;
+    cllsn cols[20];
+    int colPos;
     ln ray;
+    int noLight;
     sph *sphereCollided;
     pln *wallCollided;
+    //CALCULAR LOS VECTORES DE LA PANTALLA
 
     for (int i = 0; i < width * height * 3; i+=3) {
+        sphereCollided = NULL;
+        wallCollided = NULL;
+        colPos = 0;
+        noLight = 0;
+
         for (int j = 0; j < 3; j++) {
             pointInit[j] = firstPixel[j] + vectorScreenH[j] * ((i % (width * 3))/3) + vectorScreenV[j] * (i/(width * 3));
             ray.startPoint[j] = pointInit[j];
             ray.vector[j] = pointInit[j] - camera.center[j];
-            color[j] = 0;
-            sphereCollided = NULL;
-            wallCollided = NULL;
+            x[j] = pointInit[j];
         }
 
-        ray_tracing(&ray, pointInit, color, maxReflexes, 1, sphereCollided, wallCollided);
+        calculateCollisions(&ray, pointInit, &sphereCollided, &wallCollided, &collision);
 
-        if (color[0] > 255) {
-            screen[i] = 255;
+        if (colPos > 19 || (sphereCollided == NULL && wallCollided == NULL)) {
+            noLight = 1;
         }
-        else {
-            screen[i] = (unsigned char) color[0];
+
+        if (noLight) {
+            screen[i] = 0;
+            screen[i + 1] = 0;
+            screen[i + 2] = 0;
         }
-        if (color[1] > 255) {
-            screen[i + 1] = 255;
-        }
-        else {
-            screen[i + 1] = (unsigned char) color[1];
-        }
-        if (color[2] > 255) {
-            screen[i + 2] = 255;
+        else if (wallCollided == NULL) {
+            screen[i] = sphereCollided->color[0];
+            screen[i + 1] = sphereCollided->color[1];
+            screen[i + 2] = sphereCollided->color[2];
         }
         else {
-            screen[i + 2] = (unsigned char) color[2];
+            screen[i] = wallCollided->color[0];
+            screen[i + 1] = wallCollided->color[1];
+            screen[i + 2] = wallCollided->color[2];
         }
-    }
-
-    free(color);
-}
-
-void ray_tracing(ln *ray, double pointInit[3], double *color, int maxReflexes, double percentage, sph *sphereCollided, pln *wallCollided) {
-    int lightRet;
-    double vector[3];
-    double pointRet[3];
-    double intensity = 0;
-    sph *sphere = NULL;
-    pln *wall = NULL;
-
-    calculateCollisions(ray->vector, pointInit, &lightRet, &sphereCollided, &wallCollided);
-
-    if (!lightRet && !sphereCollided && !wallCollided) {
-        color[0] = 0;
-        color[1] = 0;
-        color[2] = 0;
-    }
-    else if (!lightRet) {
-        double vectorObject[3];
-        int absL;
-        double reflec;
-        double col[3];
-        ln rayL;
-
-        rayL.vector[0] = light.center[0] - pointInit[0];
-        rayL.vector[1] = light.center[1] - pointInit[1];
-        rayL.vector[2] = light.center[2] - pointInit[2];
-        rayL.startPoint[0] = light.center[0];
-        rayL.startPoint[1] = light.center[1];
-        rayL.startPoint[2] = light.center[2];
-        pointRet[0] = pointInit[0];
-        pointRet[1] = pointInit[1];
-        pointRet[2] = pointInit[2];
-
-        if (wallCollided == NULL) {
-            vectorObject[0] = pointInit[0] - sphereCollided->center[0];
-            vectorObject[1] = pointInit[1] - sphereCollided->center[1];
-            vectorObject[2] = pointInit[2] - sphereCollided->center[2];
-            absL = sphereCollided->absorptionLight;
-            reflec = sphereCollided->reflection;
-            col[0] = sphereCollided->color[0];
-            col[1] = sphereCollided->color[1];
-            col[2] = sphereCollided->color[2];
-        }
-        else {
-            vectorObject[0] = wallCollided->coeficients[0];
-            vectorObject[1] = wallCollided->coeficients[1];
-            vectorObject[2] = wallCollided->coeficients[2];
-            absL = wallCollided->absorptionLight;
-            reflec = wallCollided->reflection;
-            col[0] = wallCollided->color[0];
-            col[1] = wallCollided->color[1];
-            col[2] = wallCollided->color[2];
-        }
-
-        calculateCollisions(vector, pointInit, &lightRet, &sphere, &wall);
-
-        intensity += ambientLight;
-
-        if (lightRet) {
-            intensity += light.itsty * (1 - calculateAngle(vector, vectorObject));
-
-            if (absL >= 0) {
-                calculateReflex(&rayL, vectorObject, pointRet);
-                intensity += light.itsty * (1 - pow(calculateAngle(rayL.vector, ray->vector), absL));
-            }
-        }
-
-        if (maxReflexes > 0 && absL >= 0) {
-            calculateReflex(ray, vectorObject, pointRet);
-            ray_tracing(ray, pointRet, color, maxReflexes - 1, reflec, sphereCollided, wallCollided);
-        }
-
-        color[0] = (color[0] + col[0] * (1 - reflec)) * percentage;
-        color[1] = (color[1] + col[1] * (1 - reflec)) * percentage;
-        color[2] = (color[2] + col[2] * (1 - reflec)) * percentage;
-    }
-    else {
-        color[0] = 255 * percentage;
-        color[1] = 255 * percentage;
-        color[2] = 255 * percentage;
     }
 }
 
-void calculateCollisions(double vectorRay[3], double point[3], int *lightRet, sph **originSph, pln **originWall) { //REVISAR ESTA FUNCIÓN
+void calculateCollisions(ln *ray, double point[3], sph **originSph, pln **originWall, cllsn *collision) { //REVISAR ESTA FUNCIÓN
     //This function calculates the sphere that the ray collides with
     sph *sphere = NULL;
     pln *plane = NULL;
-    *lightRet = 0;
     double distance = __DBL_MAX__; /*Initialised to DBL_MAX because the first distance 
     calculated should be a candidate for the global distance. With this value we are 
     sure that every distance is lower than this one*/
-    double a = scalarProduct(vectorRay, vectorRay);
+    double a = scalarProduct(ray->vector, ray->vector);
     double b;
     double c;
     double insideSqrt;
@@ -387,10 +293,10 @@ void calculateCollisions(double vectorRay[3], double point[3], int *lightRet, sp
         /*We calculate the values of a, b and c from the equation that calculates the 
         intersection points between a line and a sphere. More details are given in README.md*/
 
-        vector[0] = point[0] - spheres[i].center[0];
-        vector[1] = point[1] - spheres[i].center[1];
-        vector[2] = point[2] - spheres[i].center[2];
-        b = -2*(vectorRay[0]*vector[0] + vectorRay[1]*vector[1] + vectorRay[2]*vector[2]);
+        vector[0] = ray->startPoint[0] - spheres[i].center[0];
+        vector[1] = ray->startPoint[1] - spheres[i].center[1];
+        vector[2] = ray->startPoint[2] - spheres[i].center[2];
+        b = -2*(ray->vector[0]*vector[0] + ray->vector[1]*vector[1] + ray->vector[2]*vector[2]);
         c = scalarProduct(vector, vector);
         c -= (spheres[i].r * spheres[i].r);
         insideSqrt = b*b - 4*a*c;
@@ -411,10 +317,10 @@ void calculateCollisions(double vectorRay[3], double point[3], int *lightRet, sp
             int behind = 0;
 
             for (int k = 0; k < 3; k++) {
-                newFirstPoint[k] = point[k] + vectorRay[k] * distanceSol;
+                newFirstPoint[k] = ray->startPoint[k] + ray->vector[k] * distanceSol;
                 vector[k] = newFirstPoint[k] - point[k];
 
-                if (vector[k]/vectorRay[k] < 0) {
+                if (vector[k]/ray->vector[k] < 0) {
                     behind = 1;
                     break;
                 }
@@ -445,19 +351,19 @@ void calculateCollisions(double vectorRay[3], double point[3], int *lightRet, sp
             continue;
         }
 
-        insideSqrt = vectorRay[0] * walls[i].coeficients[0] + vectorRay[1] * walls[i].coeficients[1] + vectorRay[2] * walls[i].coeficients[2];
+        insideSqrt = ray->vector[0] * walls[i].a + ray->vector[1] * walls[i].b + ray->vector[2] * walls[i].c;
 
         if (insideSqrt == 0) {
             continue;
         }
 
-        distanceSol = -(point[0] * walls[i].coeficients[0] + point[1] * walls[i].coeficients[1] + point[2] * walls[i].coeficients[2] + walls[i].d) / insideSqrt;
+        distanceSol = -(ray->startPoint[0] * walls[i].a + ray->startPoint[1] * walls[i].b + ray->startPoint[2] * walls[i].c + walls[i].d) / insideSqrt;
 
         for (int j = 0; j < 3; j++) {
-            newFirstPoint[j] = point[j] + vectorRay[j] * distanceSol;
+            newFirstPoint[j] = ray->startPoint[j] + ray->vector[j] * distanceSol;
             vector[j] = newFirstPoint[j] - point[j];
 
-            if (vector[j]/vectorRay[j] < 0) {
+            if (vector[j]/ray->vector[j] < 0) {
                 behind = 1;
                 break;
             }
@@ -479,80 +385,72 @@ void calculateCollisions(double vectorRay[3], double point[3], int *lightRet, sp
         }
     }
 
-    vector[0] = point[0] - light.center[0];
-    vector[1] = point[1] - light.center[1];
-    vector[2] = point[2] - light.center[2];
-    b = -2*(vectorRay[0]*vector[0] + vectorRay[1]*vector[1] + vectorRay[2]*vector[2]);
-    c = scalarProduct(vector, vector);
-    c -= (light.r * light.r);
-    insideSqrt = b*b - 4*a*c;
-
-    if (sqrt >= 0) {
-        distanceSol = (b + sqrt(insideSqrt))/(2 * a);
-        for (int j = 0; j < 2; j++) {
-            int behind = 0;
-
-            for (int k = 0; k < 3; k++) {
-                newFirstPoint[k] = point[k] + vectorRay[k] * distanceSol;
-                vector[k] = newFirstPoint[k] - point[k];
-
-                if (vector[k]/vectorRay[k] < 0) {
-                    behind = 1;
-                    break;
-                }
-            }
-
-            if (behind) {
-                continue;
-            }
-
-            distanceSol = calculateDistance(point, newFirstPoint);
-
-            if (distanceSol < distance) {
-                distance = distanceSol;
-                *lightRet = 1;
-                sphere = NULL;
-                plane = NULL;
-                returnPoint[0] = newFirstPoint[0];
-                returnPoint[1] = newFirstPoint[1];
-                returnPoint[2] = newFirstPoint[2];
-            }
-
-            distanceSol = (b - sqrt(insideSqrt))/(2 * a);
-        }
-    }
-
     if (sphere != NULL) {
+        collision->distance = calculateDistance(point, returnPoint);
+        collision->angle = calculateAngle(ray, returnPoint, sphere->center);
+        collision->sphere = sphere;
+        collision->plane = NULL;
+
         for (int i = 0; i < 3; i++) {
             point[i] = returnPoint[i];
         }
     }
     else if (plane != NULL) {
+        vector[0] = plane->a;
+        vector[1] = plane->b;
+        vector[2] = plane->c;
+        collision->distance = calculateDistance(point, returnPoint);
+        collision->angle = calculateAngle(ray, returnPoint, vector);
+        collision->plane = plane;
+        collision->sphere = NULL;
+
         for (int i = 0; i < 3; i++) {
             point[i] = returnPoint[i];
         }
     }
 
-    //PENSAR EN HACERLO RECURSIVO (ES MAS FACIL)
-
     *originSph = sphere;
     *originWall = plane;
 }
 
-void calculateReflex(ln *ray, double vector[3], double point[3]) {
-    double newPoint[3];
-    double std = sqrt(scalarProduct(vector, vector));
-    /*For calculating the reflexed ray it is necesary to calculate a second point of the line.
-    For calculating this point, we calculate a point of symmetry (a point in the line that goes 
-    from the center of the sphere and the intersection point of the ray and the sphere).
-    Then we calculate another point of the ray, so we can calculate the symmetric point of this 
-    one using the point of symmetry.
-    The last step is calling calculateRay passing this 2 points (the calculated and the 
-    intersection point)*/
-    for (int i = 0; i < 3; i++) {
-        newPoint[i] = 2*(point[i] + vector[i]/std) - (point[i] - ray->vector[i]);
+int collisionWithLight(ln *ray) {
+    double a = scalarProduct(ray->vector, ray->vector);
+    double b;
+    double c;
+    double vector[3];
+    double newFirstPoint[3];
+
+    vector[0] = ray->startPoint[0] - light.center[0];
+    vector[1] = ray->startPoint[1] - light.center[1];
+    vector[2] = ray->startPoint[2] - light.center[2];
+    b = -2*(ray->vector[0]*vector[0] + ray->vector[1]*vector[1] + ray->vector[2]*vector[2]);
+    c = scalarProduct(vector, vector);
+    c -= (light.r * light.r);
+    double insideSqrt = b*b - 4*a*c;
+
+    if (insideSqrt < 0) {
+        return 0;
     }
-    calculateRay(point, newPoint, ray);
+    else {
+        double distanceSol = (b + sqrt(insideSqrt))/(2 * a);
+        int behind = 0;
+        for (int k = 0; k < 3; k++) {
+            newFirstPoint[k] = ray->startPoint[k] + ray->vector[k] * distanceSol;
+            vector[k] = newFirstPoint[k] - ray->startPoint[k];
+
+            if (vector[k]/ray->vector[k] < 0) {
+                behind = 1;
+                break;
+            }
+        }
+
+        if (behind) {
+            return 0;
+        }
+        else {
+            return 1;
+        }
+    }
 }
 
 void calculateRay(double point1[3], double point2[3], ln *ray) {
@@ -577,6 +475,16 @@ double calculateDistance(double point1[3], double point2[3]) {
         vectorDistance[i] = point1[i] - point2[i];
     }
     return sqrt(scalarProduct(vectorDistance, vectorDistance));
+}
+
+double calculateAngle(ln *ray, double point[3], double centerSphere[3]) {
+    double vectorSphere[3];
+    for (int i = 0; i < 3; i++) {
+        vectorSphere[i] = point[i] - centerSphere[i];
+    }
+
+    return acos((ray->vector[0]*vectorSphere[0] + ray->vector[1]*vectorSphere[1] + ray->vector[2]*vectorSphere[2]) / 
+    (sqrt(scalarProduct(ray->vector, ray->vector)) * sqrt(scalarProduct(vectorSphere, vectorSphere))));
 }
 
 void writeImage() {

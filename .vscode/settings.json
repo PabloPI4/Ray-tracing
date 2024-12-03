@@ -2,6 +2,10 @@
     "files.associations": {
         "vector": "c",
         "iosfwd": "c",
-        "iterator": "c"
+        "iterator": "c",
+        "random": "c",
+        "algorithm": "c",
+        "ray-casting.h": "c",
+        "ray-tracing_prueba.h": "c"
     }
 }
