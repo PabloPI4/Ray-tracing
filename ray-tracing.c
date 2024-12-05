@@ -81,8 +81,8 @@ void readObjects(int argc, char *argv[]) {
         height = 2160;
     }
     else if (strcmp(res, "VLI") == 0) {
-        width = 13200;
-        height = 7425;
+        width = 22440;
+        height = 12240;
     }
     else {
         fprintf(stderr, "incorrect resolution\n");
@@ -105,12 +105,12 @@ void readObjects(int argc, char *argv[]) {
         fprintf(stderr, "Error reading camera\n");
         exit(2);
     }
-    light.itsty = 0.8;
+    light.itsty = 0.72;
 
-    ambientLight = 0.2;
+    ambientLight = 0.28;
 
     walls = (pln *) malloc(sizeof(pln) * 6);
-    n_walls = 6;
+    n_walls = 2;
 
     walls[0].color[0] = 255;
     walls[0].color[1] = 255;
@@ -228,7 +228,7 @@ void readObjects(int argc, char *argv[]) {
     walls[1].coeficients[0] = -camera.direction[0];
     walls[1].coeficients[1] = -camera.direction[1];
     walls[1].coeficients[2] = -camera.direction[2];
-    walls[1].d = -(walls[1].coeficients[0] * (centerPoint[0] + camera.direction[0] * 10));
+    walls[1].d = -(walls[1].coeficients[0] * (centerPoint[0] + camera.direction[0] * 16));
 
     walls[5].coeficients[0] = camera.direction[0];
     walls[5].coeficients[1] = camera.direction[1];
@@ -239,8 +239,8 @@ void readObjects(int argc, char *argv[]) {
 }
 
 void ray_global() {
-    double *color = (double *) malloc(sizeof(double) * 3);
-    int maxReflexes = 3;
+    double color[3];
+    int maxReflexes = 2;
     double pointInit[3];
     ln ray;
     sph *sphereCollided;
@@ -277,14 +277,11 @@ void ray_global() {
             screen[i + 2] = (unsigned char) color[2];
         }
     }
-
-    free(color);
 }
 
 void ray_tracing(ln *ray, double pointInit[3], double *color, int maxReflexes, double percentage, sph *sphereCollided, pln *wallCollided) {
     int lightRet;
     double vector[3];
-    double pointRet[3];
     double intensity = 0;
     sph *sphere = NULL;
     pln *wall = NULL;
@@ -306,12 +303,13 @@ void ray_tracing(ln *ray, double pointInit[3], double *color, int maxReflexes, d
         rayL.vector[0] = light.center[0] - pointInit[0];
         rayL.vector[1] = light.center[1] - pointInit[1];
         rayL.vector[2] = light.center[2] - pointInit[2];
-        rayL.startPoint[0] = light.center[0];
-        rayL.startPoint[1] = light.center[1];
-        rayL.startPoint[2] = light.center[2];
-        pointRet[0] = pointInit[0];
-        pointRet[1] = pointInit[1];
-        pointRet[2] = pointInit[2];
+        double std = scalarProduct(rayL.vector, rayL.vector);
+        rayL.vector[0] /= std;
+        rayL.vector[1] /= std;
+        rayL.vector[2] /= std;
+        rayL.startPoint[0] = pointInit[0] + rayL.vector[0] * 0.0005;
+        rayL.startPoint[1] = pointInit[1] + rayL.vector[1] * 0.0005;
+        rayL.startPoint[2] = pointInit[2] + rayL.vector[2] * 0.0005;
 
         if (wallCollided == NULL) {
             vectorObject[0] = pointInit[0] - sphereCollided->center[0];
@@ -334,27 +332,27 @@ void ray_tracing(ln *ray, double pointInit[3], double *color, int maxReflexes, d
             col[2] = wallCollided->color[2];
         }
 
-        calculateCollisions(vector, pointInit, &lightRet, &sphere, &wall);
+        calculateCollisions(rayL.vector, rayL.startPoint, &lightRet, &sphere, &wall);
 
         intensity += ambientLight;
 
-        if (lightRet) {
-            intensity += light.itsty * (1 - calculateAngle(vector, vectorObject));
+        if (sphere == NULL && wall == NULL) {
+            intensity += light.itsty * calculateAngle(rayL.vector, vectorObject);
 
             if (absL >= 0) {
-                calculateReflex(&rayL, vectorObject, pointRet);
-                intensity += light.itsty * (1 - pow(calculateAngle(rayL.vector, ray->vector), absL));
+                calculateReflex(&rayL, vectorObject, pointInit);
+                intensity += light.itsty * pow(calculateAngle(rayL.vector, ray->vector), absL);
             }
         }
 
         if (maxReflexes > 0 && absL >= 0) {
-            calculateReflex(ray, vectorObject, pointRet);
-            ray_tracing(ray, pointRet, color, maxReflexes - 1, reflec, sphereCollided, wallCollided);
+            calculateReflex(ray, vectorObject, pointInit);
+            ray_tracing(ray, pointInit, color, maxReflexes - 1, reflec, sphereCollided, wallCollided);
         }
 
-        color[0] = (color[0] + col[0] * (1 - reflec)) * percentage;
-        color[1] = (color[1] + col[1] * (1 - reflec)) * percentage;
-        color[2] = (color[2] + col[2] * (1 - reflec)) * percentage;
+        color[0] = (color[0] + col[0] * (1 - reflec) * intensity) * percentage;
+        color[1] = (color[1] + col[1] * (1 - reflec) * intensity) * percentage;
+        color[2] = (color[2] + col[2] * (1 - reflec) * intensity) * percentage;
     }
     else {
         color[0] = 255 * percentage;
@@ -479,47 +477,17 @@ void calculateCollisions(double vectorRay[3], double point[3], int *lightRet, sp
         }
     }
 
-    vector[0] = point[0] - light.center[0];
-    vector[1] = point[1] - light.center[1];
-    vector[2] = point[2] - light.center[2];
-    b = -2*(vectorRay[0]*vector[0] + vectorRay[1]*vector[1] + vectorRay[2]*vector[2]);
-    c = scalarProduct(vector, vector);
-    c -= (light.r * light.r);
-    insideSqrt = b*b - 4*a*c;
+    if ((light.center[0] - point[0])/vectorRay[0] <= (light.center[1] - point[1])/vectorRay[1] + 0.0005 && 
+        (light.center[0] - point[0])/vectorRay[0] >= (light.center[1] - point[1])/vectorRay[1] - 0.0005 && 
+        (light.center[0] - point[0])/vectorRay[0] <= (light.center[2] - point[2])/vectorRay[2] + 0.0005 && 
+        (light.center[0] - point[0])/vectorRay[0] >= (light.center[2] - point[2])/vectorRay[2] - 0.0005 && 
+        (light.center[2] - point[2])/vectorRay[2] <= (light.center[1] - point[1])/vectorRay[1] + 0.0005 && 
+        (light.center[2] - point[2])/vectorRay[2] >= (light.center[1] - point[1])/vectorRay[1] - 0.0005 && 
+        calculateDistance(point, light.center) < distance) {
 
-    if (sqrt >= 0) {
-        distanceSol = (b + sqrt(insideSqrt))/(2 * a);
-        for (int j = 0; j < 2; j++) {
-            int behind = 0;
-
-            for (int k = 0; k < 3; k++) {
-                newFirstPoint[k] = point[k] + vectorRay[k] * distanceSol;
-                vector[k] = newFirstPoint[k] - point[k];
-
-                if (vector[k]/vectorRay[k] < 0) {
-                    behind = 1;
-                    break;
-                }
-            }
-
-            if (behind) {
-                continue;
-            }
-
-            distanceSol = calculateDistance(point, newFirstPoint);
-
-            if (distanceSol < distance) {
-                distance = distanceSol;
-                *lightRet = 1;
-                sphere = NULL;
-                plane = NULL;
-                returnPoint[0] = newFirstPoint[0];
-                returnPoint[1] = newFirstPoint[1];
-                returnPoint[2] = newFirstPoint[2];
-            }
-
-            distanceSol = (b - sqrt(insideSqrt))/(2 * a);
-        }
+        sphere = NULL;
+        plane = NULL;
+        *lightRet = 1;
     }
 
     if (sphere != NULL) {
