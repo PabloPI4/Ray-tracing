@@ -15,7 +15,6 @@ int height = 0;
 double vectorScreenH[3];
 double vectorScreenV[3];
 unsigned char *screen;
-unsigned char *screenRes;
 double firstPixel[3]; //This is the pixel in the lower left corner
 
 MPI_Datatype STRUCTSPHERE;
@@ -104,20 +103,16 @@ int main(int argc, char *argv[]) {
         }
 
         readObjects(argc, argv);
-        screenRes = (unsigned char *) malloc(width * height * 3);
     }
-
-    screen = (unsigned char *) malloc(width * height * 3);
 
     MPI_Bcast(&width, 1, MPI_INT, master, MPI_COMM_WORLD);
     MPI_Bcast(&height, 1, MPI_INT, master, MPI_COMM_WORLD);
     MPI_Bcast(&n_spheres, 1, MPI_INT, master, MPI_COMM_WORLD);
+    MPI_Bcast(&n_walls, 1, MPI_INT, master, MPI_COMM_WORLD);
     if (rankid != master) {
         spheres = (sph *) malloc(sizeof(sph) * n_spheres);
         walls = (pln *) malloc(sizeof(pln) * n_walls);
     }
-
-    MPI_Bcast(&n_walls, 1, MPI_INT, master, MPI_COMM_WORLD);
     MPI_Bcast(&ambientLight, 1, MPI_DOUBLE, master, MPI_COMM_WORLD);
     MPI_Bcast(vectorScreenH, 3, MPI_DOUBLE, master, MPI_COMM_WORLD);
     MPI_Bcast(vectorScreenV, 3, MPI_DOUBLE, master, MPI_COMM_WORLD);
@@ -127,6 +122,8 @@ int main(int argc, char *argv[]) {
     MPI_Bcast((void *)walls, n_walls, STRUCTPLANE, master, MPI_COMM_WORLD);
     MPI_Bcast((void *)spheres, n_spheres, STRUCTSPHERE, master, MPI_COMM_WORLD);
 
+    screen = (unsigned char *) malloc(width * height * 3);
+
     step = (width * height)/nproc;
     if (rankid == master)
         step += (width * height)%nproc;
@@ -134,23 +131,22 @@ int main(int argc, char *argv[]) {
     step *= 3;
     start = (nproc - 1 - rankid)*(((width * height)/nproc) * 3);
     end = start + step;
-
     ray_global();
-
-    MPI_Gather((void *) &(screen[start]), step, MPI_UNSIGNED_CHAR, (void *) screenRes, step, MPI_UNSIGNED_CHAR, master, MPI_COMM_WORLD);
-
     if (rankid == master) {
-        writeImage();
-        free(screenRes);
+	MPI_Status status;
+	step = ((width*height)/nproc)*3;
+	start = 0;
+	for(int i = (nproc-1); i > 0; i--) {
+		MPI_Recv((void*) &(screen[start]), step, MPI_CHAR, i, 1, MPI_COMM_WORLD, &status);
+        	start += step;
+	}
+	writeImage();
         free(spheres);
         free(walls);
         free(screen);
+    } else {
+	MPI_Send((void*) &(screen[start]), step, MPI_CHAR, master, 1, MPI_COMM_WORLD);
     }
-
-    fprintf(stderr, "ID:%d AAA\n", rankid);
-
-    fprintf(stderr, "ID:%d BBB\n", rankid);
-
     MPI_Finalize();
 }
 
@@ -366,22 +362,16 @@ void ray_global() {
     int maxReflexes = 2;
     double pointInit[3];
     ln ray;
-    sph *sphereCollided;
-    pln *wallCollided;
-
+    #pragma omp parallel for private(color, pointInit, ray) schedule(runtime)
     for (int i = start; i < end; i+=3) {
         for (int j = 0; j < 3; j++) {
             pointInit[j] = firstPixel[j] + vectorScreenH[j] * ((i % (width * 3))/3) + vectorScreenV[j] * (i/(width * 3));
             ray.startPoint[j] = pointInit[j];
             ray.vector[j] = pointInit[j] - camera.center[j];
             color[j] = 0;
-            sphereCollided = NULL;
-            wallCollided = NULL;
         }
-
-        ray_tracing(&ray, pointInit, color, maxReflexes, 1, sphereCollided, wallCollided);
-
-        if (color[0] > 255) {
+	ray_tracing(&ray, pointInit, color, maxReflexes, 1, NULL, NULL);
+	if (color[0] > 255) {
             screen[i] = 255;
         }
         else {
@@ -671,5 +661,5 @@ double calculateDistance(double point1[3], double point2[3]) {
 
 void writeImage() {
     fprintf(image, "P6 %d %d 255\n", width, height);
-    fwrite(screenRes, 1, width*height*3, image);
+    fwrite(screen, 1, width*height*3, image);
 }
