@@ -1,25 +1,33 @@
-#include "ray-tracing.h"
+#include "ray-tracing_cuda.h"
+
+#define N_HILOS 128
+#define MAX_REFLEXES 2
+#define CHECK_CUDA_ERROR( msg ) (checkCUDAError( msg, __FILE__, __LINE__ ))
 
 sph *spheres;
-sph *deviceSpheres;
 int n_spheres;
 pln *walls;
-pln *deviceWalls;
 int n_walls;
 cam camera;
-cam *deviceCamera;
 lght light;
-lght *deviceLight;
 double ambientLight;
 int width;
 int height;
 double vectorScreenH[3];
 double vectorScreenV[3];
 unsigned char *screen;
-unsigned char *deviceScreen;
 double firstPixel[3]; //This is the pixel in the lower left corner
 
 FILE* image;
+
+static void checkCUDAError(const char *msg, const char *file, int line ) {
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {
+     fprintf(stderr, "Cuda error: %s: %s. In %s at line %d\n", msg,
+                                        cudaGetErrorString(err), file, line );
+     exit(EXIT_FAILURE);
+  }
+}
 
 int main(int argc, char *argv[]) {
     image = fopen("image.ppm","w");
@@ -29,6 +37,15 @@ int main(int argc, char *argv[]) {
     }
     readObjects(argc, argv);
 
+    sph *deviceSpheres;
+    pln *deviceWalls;
+    cam *deviceCamera;
+    lght *deviceLight;
+    double *deviceVectorScreenH;
+    double *deviceVectorScreenV;
+    double *deviceFirstPixel;
+    unsigned char *deviceScreen;
+
     screen = (unsigned char *) malloc(width * height * 3);
     cudaMalloc(&deviceScreen, width * height * 3);
 
@@ -36,14 +53,38 @@ int main(int argc, char *argv[]) {
     cudaMalloc(&deviceWalls, n_walls*sizeof(pln));
     cudaMalloc(&deviceCamera, sizeof(cam));
     cudaMalloc(&deviceLight, sizeof(lght));
+    cudaMalloc(&deviceVectorScreenH, width * height * 3);
+    cudaMalloc(&deviceVectorScreenV, width * height * 3);
+    cudaMalloc(&deviceFirstPixel, width * height * 3);
     cudaMemcpy(deviceSpheres, spheres, n_spheres*sizeof(sph), cudaMemcpyHostToDevice);
     cudaMemcpy(deviceWalls, walls, n_walls*sizeof(pln), cudaMemcpyHostToDevice);
     cudaMemcpy(deviceCamera, &camera, sizeof(cam), cudaMemcpyHostToDevice);
     cudaMemcpy(deviceLight, &light, sizeof(lght), cudaMemcpyHostToDevice);
+    cudaMemcpy(deviceVectorScreenH, vectorScreenH, 3*sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(deviceVectorScreenV, vectorScreenV, 3*sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(deviceFirstPixel, firstPixel, 3*sizeof(double), cudaMemcpyHostToDevice);
 
-    ray_global();
+    cudaEvent_t cudaStart, cudaStop;
+    float ElapsedTime;
+    cudaEventCreate(&cudaStart);
+    cudaEventCreate(&cudaStop);
+    cudaEventRecord(cudaStart, 0);
+
+    ray_global<<<(width*height)/N_HILOS, N_HILOS>>>(deviceCamera, deviceLight, deviceScreen, deviceSpheres, deviceWalls, n_spheres, n_walls, ambientLight, width, height, deviceFirstPixel, deviceVectorScreenH, deviceVectorScreenV);
+
+    cudaDeviceSynchronize();
+
+    CHECK_CUDA_ERROR("kernel invocation");
+
+    cudaMemcpy(screen, deviceScreen, width*height*3, cudaMemcpyDeviceToHost);
 
     writeImage();
+
+    cudaEventRecord(cudaStop, 0);
+    cudaEventSynchronize(cudaStop);
+    cudaEventElapsedTime(&ElapsedTime, cudaStart, cudaStop);
+
+    fprintf(stderr, "Tiempo consumido = %f segundos\n", ElapsedTime/1000);
 
     free(spheres);
     free(walls);
@@ -53,6 +94,7 @@ int main(int argc, char *argv[]) {
     cudaFree(deviceWalls);
     cudaFree(deviceCamera);
     cudaFree(deviceLight);
+    cudaFree(deviceScreen);
 }
 
 void readObjects(int argc, char *argv[]) {
@@ -258,55 +300,56 @@ void readObjects(int argc, char *argv[]) {
     if(stdbol) fclose(readObjects);
 }
 
-__global__ void ray_global() {
+__global__ void ray_global(cam *deviceCamera, lght *deviceLight, unsigned char *deviceScreen, sph *deviceSpheres, pln *deviceWalls, int n_spheres, int n_walls, double ambientLight, int width, int height, double firstPixel[3], double vectorScreenH[3], double vectorScreenV[3]) {
     double color[3];
-    int maxReflexes = 2;
-    double pointInit[3];
     ln ray;
-    sph *sphereCollided;
-    pln *wallCollided;
 
-    int stride = threadIdx.x + blockDim.x + blockIdx.x;
+    int stride = threadIdx.x + blockDim.x * blockIdx.x;
+
+    __shared__ lght sLight;
 
     for (int j = 0; j < 3; j++) {
-        pointInit[j] = firstPixel[j] + vectorScreenH[j] * ((stride % (width * 3))/3) + vectorScreenV[j] * (stride/(width * 3));
-        ray.startPoint[j] = pointInit[j];
-        ray.vector[j] = pointInit[j] - camera.center[j];
+        ray.startPoint[j] = firstPixel[j] + vectorScreenH[j] * ((stride % (width * 3))/3) + vectorScreenV[j] * (stride/(width * 3));
+        ray.vector[j] = ray.startPoint[j] - deviceCamera->center[j];
         color[j] = 0;
-        sphereCollided = NULL;
-        wallCollided = NULL;
+
+        sLight.center[j] = deviceLight->center[j];
     }
 
-    ray_tracing(&ray, pointInit, color, maxReflexes, 1, sphereCollided, wallCollided);
+    sLight.itsty = deviceLight->itsty;
+    sLight.r = deviceLight->r;
+
+    ray_tracing(deviceSpheres, deviceWalls, &ray, ray.startPoint, color, MAX_REFLEXES, 1, NULL, NULL, sLight, n_spheres, n_walls, ambientLight);
+
+    if (stride == 1037760) printf("color = %lf, %lf, %lf\n", color[0], color[1], color[2]);
 
     if (color[0] > 255) {
-        screen[stride] = 255;
+        deviceScreen[stride*3] = 255;
     }
     else {
-        screen[stride] = (unsigned char) color[0];
+        deviceScreen[stride*3] = (unsigned char) color[0];
     }
     if (color[1] > 255) {
-        screen[stride + 1] = 255;
+        deviceScreen[stride*3 + 1] = 255;
     }
     else {
-        screen[stride + 1] = (unsigned char) color[1];
+        deviceScreen[stride*3 + 1] = (unsigned char) color[1];
     }
     if (color[2] > 255) {
-        screen[stride + 2] = 255;
+        deviceScreen[stride*3 + 2] = 255;
     }
     else {
-        screen[stride + 2] = (unsigned char) color[2];
+        deviceScreen[stride*3 + 2] = (unsigned char) color[2];
     }
 }
 
-__global__ void ray_tracing(ln *ray, double pointInit[3], double *color, int maxReflexes, double percentage, sph *sphereCollided, pln *wallCollided) {
+__device__ void ray_tracing(sph *deviceSpheres, pln *deviceWalls, ln *ray, double pointInit[3], double *color, int maxReflexes, double percentage, sph *sphereCollided, pln *wallCollided, lght sLight, int n_spheres, int n_walls, double ambientLight) {
     int lightRet;
-    double vector[3];
     double intensity = 0;
     sph *sphere = NULL;
     pln *wall = NULL;
 
-    calculateCollisions(ray->vector, pointInit, &lightRet, &sphereCollided, &wallCollided);
+    calculateCollisions(deviceSpheres, deviceWalls, ray->vector, pointInit, &lightRet, &sphereCollided, &wallCollided, sLight, n_spheres, n_walls);
 
     if (!lightRet && !sphereCollided && !wallCollided) {
         color[0] = 0;
@@ -320,9 +363,9 @@ __global__ void ray_tracing(ln *ray, double pointInit[3], double *color, int max
         double col[3];
         ln rayL;
 
-        rayL.vector[0] = light.center[0] - pointInit[0];
-        rayL.vector[1] = light.center[1] - pointInit[1];
-        rayL.vector[2] = light.center[2] - pointInit[2];
+        rayL.vector[0] = sLight.center[0] - pointInit[0];
+        rayL.vector[1] = sLight.center[1] - pointInit[1];
+        rayL.vector[2] = sLight.center[2] - pointInit[2];
         double std = scalarProduct(rayL.vector, rayL.vector);
         rayL.vector[0] /= std;
         rayL.vector[1] /= std;
@@ -352,22 +395,22 @@ __global__ void ray_tracing(ln *ray, double pointInit[3], double *color, int max
             col[2] = wallCollided->color[2];
         }
 
-        calculateCollisions(rayL.vector, rayL.startPoint, &lightRet, &sphere, &wall);
+        calculateCollisions(deviceSpheres, deviceWalls, rayL.vector, rayL.startPoint, &lightRet, &sphere, &wall, sLight, n_spheres, n_walls);
 
         intensity += ambientLight;
 
         if (sphere == NULL && wall == NULL) {
-            intensity += light.itsty * calculateAngle(rayL.vector, vectorObject);
+            intensity += sLight.itsty * calculateAngle(rayL.vector, vectorObject);
 
             if (absL >= 0) {
                 calculateReflex(&rayL, vectorObject, pointInit);
-                intensity += light.itsty * pow(calculateAngle(rayL.vector, ray->vector), absL);
+                intensity += sLight.itsty * pow(calculateAngle(rayL.vector, ray->vector), absL);
             }
         }
 
         if (maxReflexes > 0 && absL >= 0) {
             calculateReflex(ray, vectorObject, pointInit);
-            ray_tracing(ray, pointInit, color, maxReflexes - 1, reflec, sphereCollided, wallCollided);
+            ray_tracing(deviceSpheres, deviceWalls, ray, pointInit, color, maxReflexes - 1, reflec, sphereCollided, wallCollided, sLight, n_spheres, n_walls, ambientLight);
         }
 
         color[0] = (color[0] + col[0] * (1 - reflec) * intensity) * percentage;
@@ -381,7 +424,7 @@ __global__ void ray_tracing(ln *ray, double pointInit[3], double *color, int max
     }
 }
 
-__global__ void calculateCollisions(double vectorRay[3], double point[3], int *lightRet, sph **originSph, pln **originWall) { //REVISAR ESTA FUNCIÓN
+__device__ void calculateCollisions(sph *deviceSpheres, pln *deviceWalls, double vectorRay[3], double point[3], int *lightRet, sph **originSph, pln **originWall, lght sLight, int n_spheres, int n_walls) { //REVISAR ESTA FUNCIÓN
     //This function calculates the sphere that the ray collides with
     sph *sphere = NULL;
     pln *plane = NULL;
@@ -399,23 +442,23 @@ __global__ void calculateCollisions(double vectorRay[3], double point[3], int *l
     double returnPoint[3];
 
     for (int i = 0; i < n_spheres; i++) {
-        if (*originSph != NULL && *originSph == spheres + i) { //If the sphere is the same as origin
+        if (*originSph != NULL && *originSph == deviceSpheres + i) { //If the sphere is the same as origin
             continue;
         }
         /*We calculate the values of a, b and c from the equation that calculates the 
         intersection points between a line and a sphere. More details are given in README.md*/
 
-        vector[0] = point[0] - spheres[i].center[0];
-        vector[1] = point[1] - spheres[i].center[1];
-        vector[2] = point[2] - spheres[i].center[2];
+        vector[0] = point[0] - deviceSpheres[i].center[0];
+        vector[1] = point[1] - deviceSpheres[i].center[1];
+        vector[2] = point[2] - deviceSpheres[i].center[2];
         b = -2*(vectorRay[0]*vector[0] + vectorRay[1]*vector[1] + vectorRay[2]*vector[2]);
         c = scalarProduct(vector, vector);
-        c -= (spheres[i].r * spheres[i].r);
+        c -= (deviceSpheres[i].r * deviceSpheres[i].r);
         insideSqrt = b*b - 4*a*c;
 
         /*With a, b and c we calculate if the equation has any solution. We know that if 
         b^2 - 4ac < 0 the equation has no solutions*/
-        if (sqrt < 0) {
+        if (insideSqrt < 0) {
             continue;
         }
 
@@ -446,7 +489,7 @@ __global__ void calculateCollisions(double vectorRay[3], double point[3], int *l
 
             if (distanceSol < distance) {
                 distance = distanceSol;
-                sphere = spheres + i;
+                sphere = deviceSpheres + i;
                 returnPoint[0] = newFirstPoint[0];
                 returnPoint[1] = newFirstPoint[1];
                 returnPoint[2] = newFirstPoint[2];
@@ -459,17 +502,17 @@ __global__ void calculateCollisions(double vectorRay[3], double point[3], int *l
     for (int i = 0; i < n_walls; i++) {
         int behind = 0;
 
-        if (*originWall != NULL && *originWall == walls + i) {
+        if (*originWall != NULL && *originWall == deviceWalls + i) {
             continue;
         }
 
-        insideSqrt = vectorRay[0] * walls[i].coeficients[0] + vectorRay[1] * walls[i].coeficients[1] + vectorRay[2] * walls[i].coeficients[2];
+        insideSqrt = vectorRay[0] * deviceWalls[i].coeficients[0] + vectorRay[1] * deviceWalls[i].coeficients[1] + vectorRay[2] * deviceWalls[i].coeficients[2];
 
         if (insideSqrt == 0) {
             continue;
         }
 
-        distanceSol = -(point[0] * walls[i].coeficients[0] + point[1] * walls[i].coeficients[1] + point[2] * walls[i].coeficients[2] + walls[i].d) / insideSqrt;
+        distanceSol = -(point[0] * deviceWalls[i].coeficients[0] + point[1] * deviceWalls[i].coeficients[1] + point[2] * deviceWalls[i].coeficients[2] + deviceWalls[i].d) / insideSqrt;
 
         for (int j = 0; j < 3; j++) {
             newFirstPoint[j] = point[j] + vectorRay[j] * distanceSol;
@@ -490,20 +533,20 @@ __global__ void calculateCollisions(double vectorRay[3], double point[3], int *l
         if (distanceSol < distance) {
             distance = distanceSol;
             sphere = NULL;
-            plane = walls + i;
+            plane = deviceWalls + i;
             returnPoint[0] = newFirstPoint[0];
             returnPoint[1] = newFirstPoint[1];
             returnPoint[2] = newFirstPoint[2];
         }
     }
 
-    if ((light.center[0] - point[0])/vectorRay[0] <= (light.center[1] - point[1])/vectorRay[1] + 0.0005 && 
-        (light.center[0] - point[0])/vectorRay[0] >= (light.center[1] - point[1])/vectorRay[1] - 0.0005 && 
-        (light.center[0] - point[0])/vectorRay[0] <= (light.center[2] - point[2])/vectorRay[2] + 0.0005 && 
-        (light.center[0] - point[0])/vectorRay[0] >= (light.center[2] - point[2])/vectorRay[2] - 0.0005 && 
-        (light.center[2] - point[2])/vectorRay[2] <= (light.center[1] - point[1])/vectorRay[1] + 0.0005 && 
-        (light.center[2] - point[2])/vectorRay[2] >= (light.center[1] - point[1])/vectorRay[1] - 0.0005 && 
-        calculateDistance(point, light.center) < distance) {
+    if ((sLight.center[0] - point[0])/vectorRay[0] <= (sLight.center[1] - point[1])/vectorRay[1] + 0.0005 && 
+        (sLight.center[0] - point[0])/vectorRay[0] >= (sLight.center[1] - point[1])/vectorRay[1] - 0.0005 && 
+        (sLight.center[0] - point[0])/vectorRay[0] <= (sLight.center[2] - point[2])/vectorRay[2] + 0.0005 && 
+        (sLight.center[0] - point[0])/vectorRay[0] >= (sLight.center[2] - point[2])/vectorRay[2] - 0.0005 && 
+        (sLight.center[2] - point[2])/vectorRay[2] <= (sLight.center[1] - point[1])/vectorRay[1] + 0.0005 && 
+        (sLight.center[2] - point[2])/vectorRay[2] >= (sLight.center[1] - point[1])/vectorRay[1] - 0.0005 && 
+        calculateDistance(point, sLight.center) < distance) {
 
         sphere = NULL;
         plane = NULL;
@@ -527,7 +570,7 @@ __global__ void calculateCollisions(double vectorRay[3], double point[3], int *l
     *originWall = plane;
 }
 
-__global__ void calculateReflex(ln *ray, double vector[3], double point[3]) {
+__device__ void calculateReflex(ln *ray, double vector[3], double point[3]) {
     double newPoint[3];
     double std = sqrt(scalarProduct(vector, vector));
     /*For calculating the reflexed ray it is necesary to calculate a second point of the line.
@@ -543,7 +586,7 @@ __global__ void calculateReflex(ln *ray, double vector[3], double point[3]) {
     calculateRay(point, newPoint, ray);
 }
 
-__global__ void calculateRay(double point1[3], double point2[3], ln *ray) {
+__device__ void calculateRay(double point1[3], double point2[3], ln *ray) {
     /*We calculate the vector that goes from point1 to point2 and then we standardizate 
     it dividing it's coordinates by the scalar product of vector*vector*/
     for (int i = 0; i < 3; i++) {
@@ -556,7 +599,7 @@ __global__ void calculateRay(double point1[3], double point2[3], ln *ray) {
     }
 }
 
-__global__ double calculateDistance(double point1[3], double point2[3]) {
+__device__ double calculateDistance(double point1[3], double point2[3]) {
     /*For calculating the distance between two points first we calculate the
     vector that goes from point1 to point2, and then we calculate the scalarProduct 
     of VectorDistance*VectorDistance*/
@@ -571,3 +614,4 @@ void writeImage() {
     fprintf(image, "P6 %d %d 255\n", width, height);
     fwrite(screen, 1, width*height*3, image);
 }
+
